@@ -1,0 +1,15 @@
+BPTree.pm			The B+ tree implementation module
+Changes				The change log
+MANIFEST			This file
+Makefile.PL			The MakeMaker script
+README				Read this first!
+t/delete.t			Test of the delete method
+t/each.t			Test of the each method
+t/find.t			Test of the find method
+t/grep.t			Test of the grep methods
+t/insert.t			Test of the insert method (kind of redundant)
+t/iterate.t			Test of the iterate method
+t/lists.t			Test of the keys/values/flattened_values methods
+t/map.t				Test of the map method
+t/runtests.pl		Helper module for testing
+try.pl				Very simple debugging script
