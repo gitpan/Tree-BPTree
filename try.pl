@@ -10,14 +10,17 @@ my @splitstr = split //, $teststr;
 
 my $i = 0;
 my $tree = Tree::BPTree->new;
-$tree->insert($_, $i++) for (@splitstr);
-$tree->reverse;
-
-$i = 0;
-foreach (@splitstr) {
+print Dumper($tree);
+for (@splitstr) {
+	$tree->insert($_, $i++);
 	print Dumper($tree);
-	print "DELETE ($_, $i)\n";
-	$tree->delete($_, $i++);
 }
 
+$tree->reverse;
 print Dumper($tree);
+
+$i = 0;
+for (@splitstr) {
+	$tree->delete($_, $i++);
+	print Dumper($tree);
+}
