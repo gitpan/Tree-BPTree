@@ -1,5 +1,11 @@
 Revision history for Perl extension Tree::BPTree.
 
+1.07  Tue Nov 30 2004
+	- Changed to use Module::Build from ExtUtils::MakeMaker
+	- Moved BPTree.pm into lib/Tree/BPTree.pm in distribution
+	- Updated the README
+	- Updated the MANIFEST
+
 1.06  Mon Sep 22 2003
 	- Revised each() to work more like one would expect. It returns key/value
 	  pairs rather than key/bucket pairs. This is more useful, though slower.
