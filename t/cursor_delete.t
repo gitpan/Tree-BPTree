@@ -24,22 +24,19 @@ my @sorted =
 	map { [ $_, $seen{$_} ] } 
 	keys(%seen);
 
-plan tests => 3 * 48 * @sorted;
+plan tests => 48 * @sorted;
 
 sub test {
 	my ($tree) = @_;
 
-	my $i = 0;
-	my $c1 = $tree->new_cursor;
-	my $c2 = $tree->new_cursor;
-	while (my @pair = $c1->each) {
-		is_deeply([ $c1->current ], \@pair);
-		is_deeply(\@pair, $sorted[$i++]);
+	my @pairs = @sorted;
 
-		$c2->each; 
-		my @pair = $c2->each;
-		is_deeply(\@pair, $sorted[1]);
-		$c2->reset;
+	my $i = 0;
+	my $cursor = $tree->new_cursor;
+	while (my @pair = $cursor->next) {
+		$cursor->delete;
+		shift @pairs;
+		is_deeply([ $tree->pairs ], \@pairs);
 	}
 }
 
