@@ -17,6 +17,7 @@ So that My salvation may reach to the end of the earth."
 -- Isaiah 49:5,6
 EOF
 
+$teststr =~ tr/,()".-:/       /;
 our @splitstr = split /[\b\s]/, $teststr;
 
 sub runtests {
@@ -26,7 +27,7 @@ sub runtests {
 
 		$tree->insert($_, $i++) for (@splitstr);
 
-		&test($tree, [ @splitstr ]);
+		&test($tree);
 	}
 }
 

@@ -33,7 +33,7 @@ my @matches = map { qr/^$letters[$_]/ } map { int(rand(scalar(@letters))) } 0 ..
 plan tests => 3 * 48;
 
 sub test {
-	my ($tree, $splitstr) = @_;
+	my ($tree) = @_;
 
 	is_deeply([ $tree->keys ], \@sorted_keys);
 	is_deeply([ $tree->values ], \@sorted_values);

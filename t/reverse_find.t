@@ -11,10 +11,12 @@ use vars qw( &runtests @splitstr );
 plan tests => 2 * 48 * @splitstr;
 
 my $i = 0;
-my @pairs = map { [ $i++, $_ ] } @splitstr;
+my @pairs = reverse(map { [ $i++, $_ ] } @splitstr);
 
 sub test {
 	my ($tree) = @_;
+
+	$tree->reverse;
 
 	for my $pair (@pairs) {
 		my $value = $tree->find($pair->[1]);

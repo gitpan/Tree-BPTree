@@ -6,7 +6,7 @@ use warnings;
 
 use Carp;
 
-our $VERSION = '1.01';
+our $VERSION = '1.02';
 
 =head1 NAME
 
@@ -39,9 +39,25 @@ Tree::BPTree - Perl implementation of B+ trees
   my $i = index $string, 'W';
   $tree->delete($_, $i++) foreach (split //, substr($string, $i, 4));
 
+  # Reverse the sort order
+  $tree->reverse;
+
   # Iterate through each key/value pair just like built-in each operator
   while (my ($key, $value) = $tree->each) {
       print "$key => $value\n";
+  }
+
+  # Reset the iterator when we quit from an "each-loop" early
+  $tree->reset;
+
+  # You might also be interested in using multiple each loops at once, which is
+  # possible through the cursor syntax
+  my $cursor = $tree->new_cursor;
+  while (my ($key, $value) = $cursor->each) {
+      my $nested = $tree->new_cursor;
+      while (my ($nkey, $nvalue) = $nested->each) {
+          # do something
+      }
   }
 
   # Iterate using an iterator subroutine
@@ -64,6 +80,27 @@ Tree::BPTree - Perl implementation of B+ trees
 
   # Clear it out and start over
   $tree->clear;
+
+=head1 MAJOR CAVEAT
+
+Before continuing, you should know this module is extremely slow. Since this is
+implemented in pure Perl, I don't think there is any chance at all of actually
+competing with hashes. Better performance is possible if you use a hash to do
+most of these operations. See F<benchmark.pl> for a sample of the performance
+issues. There you can also find code for performing essentially the same thing.
+
+On my machine, insert into the tree is 126 times slower than hash insert and 
+9 times slower than sorted list insert. Iteration in sort order is 22 times
+faster with hashes (even though the hashes have to be sorted during iteration)
+and 3 times faster with sorted lists. And tree find is 73 times slower than
+hash fetch--though it is actually approximately equivalent to using grep on an
+ordered list.
+
+I wrote this module both to accomplish some tasks I needed and because I was
+interested in understanding the algorithm better. This algorithm does provides
+some other value, such as gracefully handling iteration when elements are
+removed. However, I think I'm going to try a different solution to this problem
+after reviewing these performance deficiencies.
 
 =head1 DESCRIPTION
 
@@ -99,14 +136,14 @@ Here's a diagram of a valid B+ tree when n = 3 that stores my last name,
 "HANENKAMP":
 
             ---<K>----
-		   /          \
+           /          \
           /            \
          <H>         --<N>--
-		/   \       /       \
+        /   \       /       \
        /     \     /        | 
      <A,E>> <H>> <K,M>>   <N,P>>
      / \     |   /  \    /  \
-	/   \    |   |  |    |   \
+    /   \    |   |  |    |   \
   [1,6] [3] [0] [5][7] [2,4] [8]
 
 Anyway, you don't need to know any of that to use this implementation. The
@@ -175,11 +212,20 @@ sub last_value {
 	return $$self[-1];
 }
 
-sub bottom_first_leaf {
+sub first_leaf {
 	my ($self) = @_;
 	my $current = $self;
 	until ($current->isa('Tree::BPTree::Leaf')) {
 		$current = $$current[0];
+	}
+	return $current;
+}
+
+sub last_leaf {
+	my ($self) = @_;
+	my $current = $self;
+	until ($current->isa('Tree::BPTree::Leaf')) {
+		$current = $$current[-1];
 	}
 	return $current;
 }
@@ -272,13 +318,13 @@ sub split {
 	} elsif (defined $result) {
 		# We have room to accomodate their split, add the new nodes here.
 		# Regular insert will do this in the wrong order.
-#		$self->insert($v, $$result[-1]->bottom_first_leaf->[1], $$result[-1]);
+#		$self->insert($v, $$result[-1]->first_leaf->[1], $$result[-1]);
 
 		# The new node will always be the last node, so we need to insert the
 		# key/pointer in reverse order from normal such that the key happens at
 		# $i and the value is at $i + 1
 		my $i = $self->find($cmp, $key);
-		splice @$self, $i * 2 + 1, 0, $$result[-1]->bottom_first_leaf->[1], $$result[-1];
+		splice @$self, $i * 2 + 1, 0, $$result[-1]->first_leaf->key(0), $$result[-1];
 		return undef;
 	} else {
 		# They didn't split, so we don't have to either
@@ -354,9 +400,9 @@ sub delete {
 				# We always use the latter pointer which is normally $v+1 or $v
 				# if it is already the last pointer.
 				if ($v > 0) {
-					$self->key($v - 1, $self->value($v)->bottom_first_leaf->[1]);
+					$self->key($v - 1, $self->value($v)->first_leaf->key(0));
 				} else {
-					$self->key($v, $self->value($v + 1)->bottom_first_leaf->[1])
+					$self->key($v, $self->value($v + 1)->first_leaf->key(0))
 				}
 			}
 		}
@@ -368,7 +414,7 @@ sub delete {
 
 sub coalesce {
 	my ($self, $that) = @_;
-	push @$self, $$that[0]->bottom_first_leaf->[1], @$that;
+	push @$self, $$that[0]->first_leaf->key(0), @$that;
 	return $self;
 }
 
@@ -382,11 +428,29 @@ sub redistribute {
 	if ($that->nvalues < $self->nvalues) {
 		# Redistribute values from left to right
 		my @middle = splice @$self, -2, 2;
-		unshift @$that, $middle[-1], $$that[0]->bottom_first_leaf->[1];
+		unshift @$that, $middle[-1], $$that[0]->first_leaf->key(0);
 	} else {
 		# Redistribute values from right to left
 		my @middle = splice @$that, 0, 2;
-		push @$self, $middle[0]->bottom_first_leaf->[1], $middle[0];
+		push @$self, $middle[0]->first_leaf->key(0), $middle[0];
+	}
+}
+
+sub reverse {
+	my ($self) = @_;
+
+	# Reverses the children, reverses the internal list, and then connects the
+	# linked-list pointer of the last_leaf of each subnode to the
+	# first_leaf of the following subnode. Finally, we need to change the
+	# index key.
+	@$self = reverse @$self;
+	for (my $v = 0; $v < $self->nvalues; ++$v) {
+		$self->value($v)->reverse;
+	}
+
+	for (my $k = 0; $k < $self->nkeys; ++$k) {
+		$self->value($k)->last_leaf->last_value($self->value($k+1)->first_leaf);
+		$self->key($k, $self->value($k+1)->first_leaf->key(0));
 	}
 }
 
@@ -441,6 +505,19 @@ sub delete {
 
 	# Return the number of values remaining
 	return $self->nvalues;
+}
+
+sub reverse {
+	my ($self) = @_;
+
+	# For leaves, we must before the reverse, then copy the value pointers
+	# backwards one position. We even reverse the buckets to create a completely
+	# symmetric reversal.
+	@$self = reverse @$self;
+	for (my $v = 0; $v < $self->nvalues - 1; ++$v) {
+		$self->value($v, [ reverse @{ $self->value($v+1) } ]);
+	}
+	$$self[-1] = undef;
 }
 
 package Tree::BPTree;
@@ -500,6 +577,11 @@ sub new {
 	$args{-valuecmp} = sub { $_[0] <=> $_[1] } unless defined $args{-valuecmp};
 	$args{-unique}   = 0 unless defined $args{-unique};
 	$args{-root}     = Tree::BPTree::Leaf->new;
+
+	# This cursor is special as it doesn't have a link back to self. It will not
+	# be released to the user to call methods on directly anyway. Having the
+	# link back to self would cause a memory leak.
+	$args{-cursor}   = bless {}, 'Tree::BPTree::Cursor';
 
 	croak "Illegal value for n $args{-n}. It must be greater than or equal to 3."
 			if $args{-n} < 3;
@@ -639,7 +721,82 @@ sub delete {
 			if not $$self{-root}->isa('Tree::BPTree::Leaf') and $values == 1;
 }
 
-=item ($key, $value) = $tree->each
+=item $tree->reverse
+
+Reverse the sort order. This is done by reversing every key in the tree,
+adjusting the linked leaf list, and replacing the "-keycmp" method with a new
+one that simply negates the old one. If this method is called again, the same
+node reversal will happen, but the original "-keycmp" will be reinstated rather
+than doing a double negation.
+
+=cut
+
+sub reverse {
+	my ($self) = @_;
+	$$self{-root}->reverse;
+	if (defined $$self{-reverse_keycmp}) {
+		$$self{-keycmp} = delete $$self{-reverse_keycmp};
+	} else {
+		$$self{-reverse_keycmp} = $$self{-keycmp};
+		my $cmp = $$self{-keycmp};
+		$$self{-keycmp} = sub { -( &$cmp(@_) ) };
+	}
+}
+
+=item $cursor = $tree->new_cursor
+
+This method allows you to have multiple, simultaneous iterators through the
+same index. If you pass the C<$cursor> value returned from C<new_cursor> to
+C<each>, it will be used instead of the default internal cursor. That is,
+
+  my $c1 = $tree->new_cursor;
+  my $c2 = $tree->new_cursor;
+  while (my ($key, $value) = $tree->each($c1)) {
+      # let's go through $c1 twice as fast
+      my ($nextkey, $nextvalue) = $tree->each($c1);
+      my ($otherkey, $othervalue) = $tree->each($c2);
+  }
+
+  # and we can reset $c2 after we're done too
+  $tree->reset($c2);
+
+Cursors also have their own methods, so this same snippet could have been
+written like this instead:
+
+  my $c1 = $tree->new_cursor;
+  my $c2 = $tree->new_cursor;
+  while (my ($key, $value) = $c1->each) {
+      # let's go through $c1 twice as fast
+      my ($nextkey, $nextvalue) = $c1->each;
+      my ($otherkey, $othervalue) = $c2->each;
+  }
+
+  # and we can reset $c2 after we're done too
+  $c2->reset;
+
+=cut
+
+package Tree::BPTree::Cursor;
+
+# These keep the real work in Tree::BPTree
+sub each {
+	my ($self) = @_;
+	$$self{-tree}->each($self);
+}
+
+sub reset {
+	my ($self) = @_;
+	$$self{-tree}->reset($self);
+}
+
+package Tree::BPTree;
+
+sub new_cursor {
+	my ($self) = @_;
+	return bless { -tree => $self }, 'Tree::BPTree::Cursor';
+}
+
+=item ($key, $value) = $tree->each [ ($cursor) ]
 
 This method provides a similar facility as that of the C<each> operator. Each
 call will iterate through each key/value pair in sort order. After the last
@@ -653,50 +810,79 @@ again. This is useful for using within C<while> loops:
 =cut
 
 sub each {
-	my ($self) = @_;
+	my ($self, $cursor) = @_;
+	$cursor = $$self{-cursor} unless defined $cursor;
 
-	# If -each is not defined, then they haven't ran each yet (or the last run
+	# This method operates on a cursor in three states:
+	#   1. Fresh. $$cursor{-index} is undefined to show that we are in a fresh
+	#      state and should return the very first index.
+	#   2. Iterating. $$cursor{-index} and $$cursor{-node} are defined to show
+	#      that we are somewhere in the middle of the list.
+	#   3. Dead. $$cursor{-node} is undefined to show that we have reached the
+	#      last node. At this point () should be returned and then
+	#      $$cursor{-index} deleted to return us to Fresh state.
+	#
+	# It is possible to move directly from Fresh to Dead in one call by checking
+	# the size of $$cursor{-node}. If $$cursor{-node}->nvalues == 1, then the
+	# very first node is empty, so we immediately return that we are Dead and
+	# return to a Fresh state.
+
+	# If the cursor is empty, then they haven't ran each yet (or the last run
 	# has concluded). Set a new iteration run up.
-	unless (defined $$self{-each}) {
-		$$self{-each}{-node}  = $$self{-root}->bottom_first_leaf;
-		$$self{-each}{-index} = 0;
+	unless (defined $$cursor{-index}) {
+		$$cursor{-node}  = $$self{-root}->first_leaf;
+		$$cursor{-index} = 0;
 	}
 
-	if (defined $$self{-each}{-node}) {
+	if (defined $$cursor{-node} and $$cursor{-node}->nvalues > 1) {
 		# The last run didn't detect the end of the list, so give them the next
 		# value
 		my @next = (
-			$$self{-each}{-node}->key($$self{-each}{-index}),
-			$$self{-each}{-node}->value($$self{-each}{-index}),
+			$$cursor{-node}->key($$cursor{-index}),
+			$$cursor{-node}->value($$cursor{-index}),
 		);
 
 		# Increment the pointer
-		if ($$self{-each}{-index} + 1 == $$self{-each}{-node}->nvalues - 1) {
+		if ($$cursor{-index} + 1 == $$cursor{-node}->nvalues - 1) {
 			# We've reached the end of a node, move to the next
-			my $next_node = $$self{-each}{-node}->value($$self{-each}{-index} + 1);
+			my $next_node = $$cursor{-node}->value($$cursor{-index} + 1);
 
 			# Check for orphaned nodes and remove them
 			while (defined $next_node and $next_node->nvalues == 1) {
 				$next_node = $next_node->value(0);
 			}
-			$$self{-each}{-node}->value($$self{-each}{-index} + 1, $next_node);
+			$$cursor{-node}->value($$cursor{-index} + 1, $next_node);
 
 			# Move to the next node
-			$$self{-each}{-node}  = $next_node;
-			$$self{-each}{-index} = 0;
+			$$cursor{-node}  = $next_node;
+			$$cursor{-index} = 0;
 		} else {
 			# We've still got more key/value pairs to read in this node
-			++$$self{-each}{-index};
+			++$$cursor{-index};
 		}
 
 		return @next;
 	} else {
-		# The last run reached the end of the list, so delete the -each element
+		# The last run reached the end of the list, so delete the -index element
 		# so we can start anew and return undef once, just like the each
 		# operator.
-		delete $$self{-each};
+		delete $$cursor{-index};
 		return ();
 	}
+}
+
+=item $tree->reset [ ($cursor) ]
+
+Reset the given cursor to a fresh state--that is, ready to return the first
+value on the next call to C<each>. If no C<$cursor> is given, then the default
+internal cursor is reset.
+
+=cut
+
+sub reset {
+	my ($self, $cursor) = @_;
+	$cursor = $$self{-cursor} unless defined $cursor;
+	delete $$cursor{-index};
 }
 
 =item $tree->iterate(\&iter)
@@ -804,6 +990,8 @@ sub grep_flattened_values {
 	return @result;
 }
 
+=item @pairs = $tree->pairs
+
 =item @keys = $tree->keys
 
 =item @values = $tree->values
@@ -811,6 +999,10 @@ sub grep_flattened_values {
 =item @flattened_values = $tree->flattened_values
 
 Returns all elements of the given type.
+
+C<pairs> returns all key/value pairs stored in the tree. Each pair is returned
+as an array reference contain two elements. The first element is the key. The
+second element is a bucket, which is an array-reference of stored values.
 
 C<keys> returns all keys stored in the tree.
 
@@ -822,26 +1014,25 @@ buckets of stored values.
 
 =cut
 
+sub pairs {
+	my ($self) = @_;
+
+	my @pairs;
+	my $cursor = $self->new_cursor;
+	while (my ($k, $v) = $self->each($cursor)) {
+		push @pairs, [ $k, $v ];
+	}
+
+	return @pairs;
+}
+
 sub keys {
 	my ($self) = @_;
 
-	# Find the front of the linked leaf list
-	my $current = $$self{-root};
-	$current = $current->value(0)
-			until $current->isa('Tree::BPTree::Leaf');
-
-	# Iterate through the leaves
 	my @keys;
-	for (; defined $current; $current = $current->last_value) {
-		# Check for orphans and remove them
-		my $next = $current->last_value;
-		$next = $next->value(0) while defined $next and $next->nvalues == 1;
-		$current->last_value($next);
-		
-		# Iterate through keys in leaf
-		for (my $k = 0; $k < $current->nkeys; ++$k) {
-			push @keys, $current->key($k);
-		}
+	my $cursor = $self->new_cursor;
+	while (my ($k, $v) = $self->each($cursor)) {
+		push @keys, $k;
 	}
 
 	return @keys;
@@ -850,27 +1041,10 @@ sub keys {
 sub values {
 	my ($self) = @_;
 
-	# Find the front of the linked leaf list
-	my $current = $$self{-root};
-	$current = $current->value(0)
-			until $current->isa('Tree::BPTree::Leaf');
-	
-	# Iterator through the leaves
 	my @values;
-	for (; defined $current; $current = $current->last_value) {
-		# Check for orphans and remove them
-		my $next = $current->last_value;
-		$next = $next->value(0) while defined $next && $next->nvalues == 1;
-		$current->last_value($next);
-
-		# Iterator through values in leaf
-		#
-		# NOTE: I use the nkeys size rather than the nvalues size since I never
-		# want to return the last value since it's the pointer to the next node
-		# rather than to a buck
-		for (my $v = 0; $v < $current->nkeys; ++$v) {
-			push @values, $current->value($v);
-		}
+	my $cursor = $self->new_cursor;
+	while (my ($k, $v) = $self->each($cursor)) {
+		push @values, $v;
 	}
 
 	return @values;
@@ -879,27 +1053,10 @@ sub values {
 sub flattened_values {
 	my ($self) = @_;
 	
-	# Find the front of the linked leaf list
-	my $current = $$self{-root};
-	$current = $current->value(0)
-			until $current->isa('Tree::BPTree::Leaf');
-	
-	# Iterator through the leaves
 	my @values;
-	for (; defined $current; $current = $current->last_value) {
-		# Check for orphans and remove them
-		my $next = $current->last_value;
-		$next = $next->value(0) while defined $next && $next->nvalues == 1;
-		$current->last_value($next);
-
-		# Iterator through values in leaf
-		#
-		# NOTE: I use the nkeys size rather than the nvalues size since I never
-		# want to return the last value since it's the pointer to the next node
-		# rather than to a buck
-		for (my $v = 0; $v < $current->nkeys; ++$v) {
-			push @values, @{ $current->value($v) };
-		}
+	my $cursor = $self->new_cursor;
+	while (my ($k, $v) = $self->each($cursor)) {
+		push @values, @$v;
 	}
 
 	return @values;

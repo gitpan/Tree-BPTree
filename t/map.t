@@ -28,7 +28,7 @@ my @sorted =
 plan tests => 48;
 
 sub test {
-	my ($tree, $splitstr) = @_;
+	my ($tree) = @_;
 
 	my $i = 0;
 	my @rtree  = $tree->map(sub { [ reverse(@_) ] });

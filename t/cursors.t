@@ -24,13 +24,22 @@ my @sorted =
 	map { [ $_, $seen{$_} ] } 
 	keys(%seen);
 
-plan tests => 48 * @sorted;
+plan tests => 2 * 48 * @sorted;
 
 sub test {
 	my ($tree) = @_;
 
 	my $i = 0;
-	$tree->iterate(sub { is_deeply(\@_, $sorted[$i++]) });
+	my $c1 = $tree->new_cursor;
+	my $c2 = $tree->new_cursor;
+	while (my @pair = $c1->each) {
+		is_deeply(\@pair, $sorted[$i++]);
+
+		$c2->each; 
+		my @pair = $c2->each;
+		is_deeply(\@pair, $sorted[1]);
+		$c2->reset;
+	}
 }
 
 runtests;

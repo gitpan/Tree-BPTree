@@ -5,12 +5,13 @@
 use Data::Dumper;
 use Tree::BPTree;
 
-my $teststr = 'ANDREW STERLIN GHANENKAMP';
+my $teststr = 'ANDREW STERLING HANENKAMP';
 my @splitstr = split //, $teststr;
 
 my $i = 0;
 my $tree = Tree::BPTree->new;
 $tree->insert($_, $i++) for (@splitstr);
+$tree->reverse;
 
 $i = 0;
 foreach (@splitstr) {

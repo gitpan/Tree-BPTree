@@ -24,10 +24,10 @@ my @sorted =
 	map { [ $_, $seen{$_} ] } 
 	keys(%seen);
 
-plan tests => 48 * @sorted;
+plan tests => 48 * @sorted + 1;
 
 sub test {
-	my ($tree, $splitstr) = @_;
+	my ($tree) = @_;
 
 	my $i = 0;
 	while (my @pair = $tree->each) {
@@ -36,3 +36,6 @@ sub test {
 }
 
 runtests;
+
+my $tree = Tree::BPTree->new;
+ok(!$tree->each);

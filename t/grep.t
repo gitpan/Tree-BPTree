@@ -30,7 +30,7 @@ my @matches = map { qr/^$letters[$_]/ } map { int(rand(scalar(@letters))) } 0 ..
 plan tests => 4 * 10 * 48;
 
 sub test {
-	my ($tree, $splitstr) = @_;
+	my ($tree) = @_;
 
 	for my $i (0 .. $#matches) {
 		my $treematch = sub { $_[0] =~$matches[$i] };
